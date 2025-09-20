@@ -170,6 +170,129 @@ def cmd_init(args):
     repo_create(args.path)
 
 
+def repo_find(path='.',required=True):
+    path = os.path.realpath(path)
+
+    if os.path.isdir(os.path.join(path,'.git')):
+        return GitRepository(path)
+    
+    parent = os.path.realpath(os.path.join(path,".."))
+
+    if parent == path:
+        if required:
+            raise Exception("No git directory")
+        else :
+            return None
+        
+    return repo_find(parent,required)
 
 
-    """ ---------- 3.3 ile devam et"""
+
+class GitObject(object):
+
+    def __init__(self,data=None):
+        if data !=None:
+            pass
+        else :
+            self.init()
+    
+    # python object to git object with binary
+    def serialize(self,repo):
+        raise Exception("Unimplemented")
+    
+    # binary git bobject to python object
+    def deserialize(self ,data):
+        raise Exception("Unimplemented")
+    
+    def init(self):
+        pass
+
+
+
+    def object_read(repo, sha):
+        """
+        Belirtilen SHA-1 hash'ine (nesne kimliği) sahip Git nesnesini okur.
+        
+        Argümanlar:
+            repo: GitRepository nesnesi. Depo yollarını yönetmek için kullanılır.
+            sha: Okunacak nesnenin 40 karakterlik SHA-1 hash'i.
+        
+        Döndürür:
+            Okunan veriye sahip bir Git nesnesi (örn. GitBlob, GitCommit).
+        """
+
+        # 1. Objenin dosya yolunu bul
+        # Git, nesneleri SHA-1 hash'inin ilk 2 karakterini klasör adı,
+        # kalan 38 karakterini ise dosya adı olarak kullanarak depolar.
+        # Örnek: '2a/982181b67d93b3e21079d2b27083049174665'
+        path = repo_file(repo, "object", sha[0:2], sha[2:])
+
+        # Dosya mevcut değilse, nesne bulunamadığı için None döner.
+        if not os.path.isfile(path):
+            return None
+        
+        # 2. Sıkıştırılmış veriyi oku ve aç
+        # Nesne dosyaları zlib kütüphanesi ile sıkıştırılmıştır.
+        with open(path, "rb") as f:
+            # Dosyayı ikili (binary) modda okur ve zlib ile sıkıştırmasını açar.
+            raw = zlib.decompress(f.read())
+
+        # 3. Nesnenin başlık bilgilerini ayrıştır
+        # Okunan verinin başında "nesne_tipi boşluk boyut_bilgisi \0" şeklinde bir başlık bulunur.
+        # Örnek: b'blob 12\x00merhaba dunya'
+        
+        # İlk boşluğun konumunu bulur. Bu, nesne tipinin bittiği yerdir.
+        x = raw.find(b' ')
+        fmt = raw[0:x]  # 'blob', 'tree', 'commit' gibi nesne tipini alır.
+
+        # Boşluktan sonraki ilk null byte'ın (\x00) konumunu bulur.
+        # Bu, boyut bilgisinin bittiği yerdir.
+        y = raw.find(b'\x00', x)
+        
+        # Boşluk ile null byte arasındaki veriyi alıp tam sayıya (int) dönüştürür.
+        size = int(raw[x:y].decode("ascii"))
+
+        # 4. Veri bütünlüğünü kontrol et
+        # Başlıkta belirtilen boyut ile, null byte'tan sonraki gerçek veri boyutunu karşılaştırır.
+        # Eğer boyutlar eşleşmiyorsa, dosyanın bozuk olduğu anlamına gelir ve hata fırlatılır.
+        if size != len(raw) - y - 1:
+            raise Exception(f"Malformed object {sha}: bad length")
+        
+        # 5. Doğru nesne sınıfını seç ve başlat
+        # 'match' ifadesiyle, belirlenen nesne tipine göre doğru Python sınıfını seçer.
+        # Örnek: Nesne tipi b'blob' ise, c değişkeni GitBlob sınıfına atanır.
+        match fmt:
+            case b'commit':
+                c = GitCommit
+            case b'tree':
+                c = GitTree
+            case b'tag':
+                c = GitTag
+            case b'blob':
+                c = GitBlob
+            case _:
+                # Eğer tip tanıdık değilse, desteklenmediği için hata fırlatır.
+                raise Exception(f"Unknown type {fmt.decode('ascii')} for object {sha}")
+                
+        # 6. Nesneyi oluştur ve veriyi yükle
+        # Seçilen sınıfın yapıcısını (constructor) çağırarak yeni bir nesne oluşturur.
+        # Yapıcıya, null byte'tan sonra başlayan ham veri bloğunu argüman olarak verir.
+        return c(raw[y+1:])
+
+    def object_write(obj, repo=None):
+        # Serialize object data
+        data = obj.serialize()
+        # Add header
+        result = obj.fmt + b' ' + str(len(data)).encode() + b'\x00' + data
+        # Compute hash
+        sha = hashlib.sha1(result).hexdigest()
+
+        if repo:
+            # Compute path
+            path=repo_file(repo, "objects", sha[0:2], sha[2:], mkdir=True)
+
+            if not os.path.exists(path):
+                with open(path, 'wb') as f:
+                    # Compress and write
+                    f.write(zlib.compress(result))
+        return sha
