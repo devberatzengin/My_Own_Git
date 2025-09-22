@@ -53,6 +53,12 @@ argsp.add_argument("-w",
 argsp.add_argument("path",
                    help="Read object from <file>")
 
+argsp = argsubparsers.add_parser("log", help="Display history of a given commit")
+argsp.add_argument("commit",
+                   default="HEAD",
+                   nargs="?",
+                   help="Commit to start at.")
+
 def main(argv=sys.argv[1:]):
     args = argparser.parse_args(argv)
     match args.command:
@@ -277,4 +283,111 @@ def cmd_hash_object(args):
         sha = object_hash(fd, args.type.encode(), repo)
         print(sha)
 
-"""4.8 ile devam et"""
+def kvlm_parse(raw, start=0, dct=None):
+    if not dct:
+        dct = dict()
+
+    spc = raw.find(b' ', start)
+    nl = raw.find(b'\n', start)
+
+    # Anahtar-değer çiftleri bittiyse gövde (body) metnini al.
+    if (spc < 0 or nl < spc):
+        assert nl == start
+        dct[None] = raw[start + 1:]
+        return dct
+
+    key = raw[start:spc]
+    end = start
+
+    # Değerin bitişini bul, çok satırlı değerleri işle.
+    while 1:
+        end = raw.find(b'\n', end + 1)
+        if raw[end + 1] != ord(' '):
+            break
+
+    value = raw[spc + 1:end].replace(b'\n ', b'\n')
+
+    # Aynı anahtar varsa değeri listeye ekle, yoksa yeni bir anahtar-değer çifti oluştur.
+    if key in dct:
+        if type(dct[key]) == list:
+            dct[key].append(value)
+        else:
+            dct[key] = [dct[key], value]
+    else:
+        dct[key] = value
+
+    return kvlm_parse(raw, start=end + 1, dct=dct)
+
+
+def kvlm_serialize(kvlm):
+    ret = b''
+    # Anahtar-değer çiftlerini alıp formatla.
+    for k in kvlm.keys():
+        if k == None:
+            continue
+        val = kvlm[k]
+        if type(val) != list:
+            val = [val]
+        for v in val:
+            ret += k + b' ' + (v.replace(b'\n', b'\n ')) + b'\n'
+
+    # Gövde metnini ekle.
+    ret += b'\n' + kvlm[None]
+    return ret
+
+
+class GitCommit(GitObject):
+    fmt = b'commit'
+
+    # Nesneyi bayt dizisinden ayrıştır.
+    def deserialize(self, data):
+        self.kvlm = kvlm_parse(data)
+
+    # Nesneyi bayt dizisine dönüştür.
+    def serialize(self):
+        return kvlm_serialize(self.kvlm)
+
+    # Yeni bir commit nesnesi başlat.
+    def init(self):
+        self.kvlm = dict()
+
+# Komut satırı log fonksiyonu.
+def cmd_log(args):
+    repo = repo_find()
+    print("digraph wyaglog{")
+    print("  node[shape=rect]")
+    # Grafik oluşturma fonksiyonunu çağır.
+    log_graphviz(repo, object_find(repo, args.commit), set())
+    print("}")
+
+# Commit geçmişini Graphviz formatında görselleştirir.
+def log_graphviz(repo, sha, seen):
+    # Daha önce işlenmişse dur.
+    if sha in seen:
+        return
+    seen.add(sha)
+
+    commit = object_read(repo, sha)
+    message = commit.kvlm[None].decode("utf8").strip()
+    # Mesajı Graphviz için hazırla
+    message = message.replace("\\", "\\\\").replace("\"", "\\\"")
+    if "\n" in message:
+        message = message[:message.index("\n")]
+
+    # Commit düğümünü Graphviz çıktısına ekle
+    print(f"  c_{sha} [label=\"{sha[0:7]}: {message}\"]")
+    assert commit.fmt == b'commit'
+
+    # Eğer parent yoksa dur
+    if not b'parent' in commit.kvlm.keys():
+        return
+
+    parents = commit.kvlm[b'parent']
+    if type(parents) != list:
+        parents = [parents]
+
+    # Parent'lar için ok çiz ve özyinelemeli çağrı yap
+    for p in parents:
+        p = p.decode("ascii")
+        print(f"  c_{sha} -> c_{p};")
+        log_graphviz(repo, p, seen)
