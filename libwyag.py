@@ -108,6 +108,13 @@ argsp.add_argument("path", nargs="+", help="Paths to check")
 
 argsp = argsubparsers.add_parser("status", help = "Show the working tree status.")
 
+argsp = argsubparsers.add_parser("rm", help="Remove files from the working tree and the index.")
+argsp.add_argument("path", nargs="+", help="Files to remove")
+
+
+argsp = argsubparsers.add_parser("add", help = "Add files contents to the index.")
+argsp.add_argument("path", nargs="+", help="Files to add")
+
 
 def main(argv=sys.argv[1:]):
     args = argparser.parse_args(argv)
@@ -1069,23 +1076,153 @@ def cmd_status_index_worktree(repo, index):
     for entry in index.entries:
         full_path= os.path.join(repo.worktree ,entry.name)
 
-    if not os.path.exists(full_path): print("deleted", entry.name)
-    else:
-        stat = os.stat(full_path)
-        ctime_ns = entry.ctime[0] * 10**9 + entry.ctime[1]
-        mtime_ns = entry.mtime[0] * 10**9 + entry.mtime[1]
-        if (stat.st_ctime_ns != ctime_ns) or (stat.st_mtime_ns != mtime_ns):
-            # @FIXME This *will* crash on symlinks to dir.
-            with open(full_path, "rb") as fd:
-                new_sha = object_hash(fd, b"blob", None)
-                # If the hashes are the same, the files are actually the same.
-                same = entry.sha == new_sha
+        if not os.path.exists(full_path): print("deleted", entry.name)
+        else:
+            stat = os.stat(full_path)
+            ctime_ns = entry.ctime[0] * 10**9 + entry.ctime[1]
+            mtime_ns = entry.mtime[0] * 10**9 + entry.mtime[1]
+            if (stat.st_ctime_ns != ctime_ns) or (stat.st_mtime_ns != mtime_ns):
+                # @FIXME This *will* crash on symlinks to dir.
+                with open(full_path, "rb") as fd:
+                    new_sha = object_hash(fd, b"blob", None)
+                    # If the hashes are the same, the files are actually the same.
+                    same = entry.sha == new_sha
 
-                if not same:
-                    print("  modified:", entry.name)
+                    if not same:
+                        print("  modified:", entry.name)
 
-    if entry.name in all_files:
-        all_files.remove(entry.name)
+        if entry.name in all_files:
+            all_files.remove(entry.name)
     
     print()
     print("untracked files")
+
+    for f in all_files:
+        if not check_ignore(ignore,f):
+            print(" ",f)
+    
+
+
+
+def index_write(repo, index):
+    with open(repo_file(repo, "index"), "wb") as f:
+
+        f.write(b"DIRC")
+        f.write(index.version.to_bytes(4, "big"))
+        f.write(len(index.entries).to_bytes(4, "big"))
+
+        idx = 0
+        for e in index.entries:
+            f.write(e.ctime[0].to_bytes(4, "big"))
+            f.write(e.ctime[1].to_bytes(4, "big"))
+            f.write(e.mtime[0].to_bytes(4, "big"))
+            f.write(e.mtime[1].to_bytes(4, "big"))
+            f.write(e.dev.to_bytes(4, "big"))
+            f.write(e.ino.to_bytes(4, "big"))
+
+            mode = (e.mode_type << 12) | e.mode_perms
+            f.write(mode.to_bytes(4, "big"))
+            f.write(e.uid.to_bytes(4, "big"))
+            f.write(e.gid.to_bytes(4, "big"))
+            f.write(e.fsize.to_bytes(4, "big"))
+            f.write(int(e.sha, 16).to_bytes(20, "big"))
+
+            flag_assume_valid = 0x1 << 15 if e.flag_assume_valid else 0
+
+            name_bytes = e.name.encode("utf8")
+            bytes_len = len(name_bytes)
+            if bytes_len >= 0xFFF:
+                name_length = 0xFFF
+            else:
+                name_length = bytes_len
+
+            f.write((flag_assume_valid | e.flag_stage | name_length).to_bytes(2, "big"))
+            f.write(name_bytes)
+            f.write((0).to_bytes(1, "big"))
+
+            idx += 62 + len(name_bytes) + 1
+
+            if idx % 8 != 0:
+                pad = 8 - (idx % 8)
+                f.write((0).to_bytes(pad, "big"))
+                idx += pad
+
+
+def cmd_rm(args):
+    repo = repo_find()
+    rm(repo,args.path)
+
+def rm(repo,paths,delete=True,skip_missing=True):
+    index=index_read(repo)
+    worktree=repo.worktree + os.sep
+    
+    abspaths = set()
+    
+    for path in paths:
+        abspath = os.path.abspath(path)
+        if abspath.startswith(worktree):
+            abspaths.add(abspath)
+        else:
+            raise Exception(f"Cannot remove paths outside of worktree: {paths}")
+
+    kept_entries = list()
+    remove = list()
+
+    for e in index.entries:
+        full_path = os.path.join(repo.worktree, e.name)
+
+        if full_path in abspaths:
+            remove.append(full_path)
+            abspaths.remove(full_path)
+        else:
+            kept_entries.append(e) 
+
+    if len(abspaths) > 0 and not skip_missing:
+        raise Exception(f"Cannot remove paths not in the index: {abspaths}")
+
+    if delete:
+        for path in remove:
+            os.unlink(path)
+
+    index.entries = kept_entries
+    index_write(repo, index)
+
+
+def cmd_add(args):
+    repo = repo_find()
+    add(repo,args.path)
+
+def add(repo, paths, delete=True, skip_missing=False):
+    
+    rm (repo, paths, delete=False, skip_missing=True)
+
+    worktree = repo.worktree + os.sep
+    clean_paths = set()
+    
+    for path in paths:
+        abspath = os.path.abspath(path)
+        if not (abspath.startswith(worktree) and os.path.isfile(abspath)):
+            raise Exception(f"Not a file, or outside the worktree: {paths}")
+        relpath = os.path.relpath(abspath, repo.worktree)
+        clean_paths.add((abspath,  relpath))
+
+    index = index_read(repo)
+
+    for (abspath, relpath) in clean_paths:
+        with open(abspath, "rb") as fd:
+            sha = object_hash(fd, b"blob", repo)
+
+            stat = os.stat(abspath)
+
+            ctime_s = int(stat.st_ctime)
+            ctime_ns = stat.st_ctime_ns % 10**9
+            mtime_s = int(stat.st_mtime)
+            mtime_ns = stat.st_mtime_ns % 10**9
+
+            entry = GitIndexEntry(ctime=(ctime_s, ctime_ns), mtime=(mtime_s, mtime_ns), dev=stat.st_dev, ino=stat.st_ino,
+                                  mode_type=0b1000, mode_perms=0o644, uid=stat.st_uid, gid=stat.st_gid,
+                                  fsize=stat.st_size, sha=sha, flag_assume_valid=False,
+                                  flag_stage=False, name=relpath)
+            index.entries.append(entry)
+
+    index_write(repo, index)
