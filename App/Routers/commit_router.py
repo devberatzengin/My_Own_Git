@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from controllers.commit_controller import (
+from Controllers.commit_controller import (
     create_commit,
     get_commits,
     get_commit_by_hash

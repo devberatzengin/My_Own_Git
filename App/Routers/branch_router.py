@@ -1,9 +1,7 @@
 from fastapi import APIRouter
-from controllers.branch_controller import (
-    create_branch,
-    get_branches,
-    get_branch_by_name,
-    delete_branch_by_name
+from Controllers.branch_controller import(
+    get_branches as gt, 
+    create_branch as cb
 )
 
 router = APIRouter(
@@ -11,18 +9,10 @@ router = APIRouter(
     tags=["Branches"]
 )
 
-@router.post("/")
-def create_branch_route(repo_path: str, branch_name: str):
-    return create_branch(repo_path, branch_name)
-
 @router.get("/")
-def get_all_branches(repo_path: str):
-    return get_branches(repo_path)
+def get_branches(repo_path: str):
+    return gt(repo_path)
 
-@router.get("/{branch_name}")
-def get_branch(repo_path: str, branch_name: str):
-    return get_branch_by_name(repo_path, branch_name)
-
-@router.delete("/{branch_name}")
-def delete_branch(repo_path: str, branch_name: str):
-    return delete_branch_by_name(repo_path, branch_name)
+@router.post("/")
+def create_branch(repo_path: str, name: str, commit: str):
+    return cb(repo_path, name, commit)
