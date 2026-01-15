@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>MiniGit</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div class="app">
+
+    <aside class="sidebar">
+        <div class="logo">Mini<span>Git</span></div>
+
+        <nav>
+            <button onclick="show('repo')">📦 Repository</button>
+            <button onclick="show('commit')">📝 Commit</button>
+            <button onclick="show('log')">📜 Log</button>
+            <button onclick="show('branch')">🌿 Branch</button>
+            <button onclick="show('checkout')">🔀 Checkout</button>
+        </nav>
+
+        <div class="footer">
+            <span>Status:</span>
+            <strong id="status">Idle</strong>
+        </div>
+    </aside>
+
+    <main class="content">
+
+        <header class="topbar">
+            <h2 id="pageTitle">Repository</h2>
+            <div class="repo-indicator">
+                Repo: <span id="activeRepo">None</span>
+            </div>
+        </header>
+
+        <section id="repo" class="panel active">
+            <h3>Initialize Repository</h3>
+            <input id="repoPath" placeholder="Repository path">
+            <button onclick="createRepo()">Init Repository</button>
+        </section>
+
+        <section id="commit" class="panel">
+            <h3>Create Commit</h3>
+            <input id="commitRepo" placeholder="Repository path">
+            <textarea id="commitMsg" placeholder="Write a meaningful commit message..."></textarea>
+            <button onclick="createCommit()">Commit</button>
+        </section>
+
+        <section id="log" class="panel">
+            <h3>Commit History</h3>
+            <input id="logRepo" placeholder="Repository path">
+            <button onclick="getLog()">Load Log</button>
+            <div class="terminal">
+                <pre id="logOutput">$ git log</pre>
+            </div>
+        </section>
+
+        <section id="branch" class="panel">
+            <h3>Create Branch</h3>
+            <input id="branchRepo" placeholder="Repository path">
+            <input id="branchName" placeholder="Branch name">
+            <button onclick="createBranch()">Create Branch</button>
+        </section>
+
+        <section id="checkout" class="panel">
+            <h3>Checkout Branch</h3>
+            <input id="checkoutRepo" placeholder="Repository path">
+            <input id="checkoutBranch" placeholder="Branch name">
+            <button onclick="checkout()">Checkout</button>
+        </section>
+
+    </main>
+</div>
+
+<div id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
